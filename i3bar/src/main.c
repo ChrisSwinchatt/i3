@@ -55,12 +55,54 @@ static char *expand_path(char *path) {
     return result;
 }
 
+/*
+ * Parse the options for -S/--group.
+ *
+ */
+void parse_group_options(const char *options, const char* group_str) {
+    size_t group_str_len = strlen(group_str);
+    const char* start = options;
+    char* p;
+
+    do {
+        config.groups = srealloc(config.groups, sizeof(config.groups[0])*(config.num_groups + 1));
+
+        config.groups[config.num_groups] = strtol(start, &p, 10);
+        if (config.groups[config.num_groups] < 0) {
+            goto bad_option;
+        }
+
+        config.num_groups++;
+
+        if (*p == 0) {
+            break;
+        }
+
+        if (strncmp(p, group_str, group_str_len) != 0) {
+            goto bad_option;
+        }
+
+        start = p + group_str_len;
+        if (*start == 0) {
+            goto bad_option;
+        }
+
+    } while (*p);
+
+    return;
+
+bad_option:
+    ELOG("bad argument to --group\n");
+    exit(EXIT_FAILURE);
+}
+
 static void print_usage(char *elf_name) {
     printf("Usage: %s [-b bar_id] [-s sock_path] [-t] [-h] [-v] [-V]\n", elf_name);
     printf("\n");
     printf("-b, --bar_id       <bar_id>\tBar ID for which to get the configuration, defaults to the first bar from the i3 config\n");
     printf("-s, --socket       <sock_path>\tConnect to i3 via <sock_path>\n");
     printf("-t, --transparency Enable transparency (RGBA colors)\n");
+    printf("-g, --group        <group0,group1,...,groupN>\tPlace statusline blocks into dynamically spaced groups that fill the bar\n");
     printf("-h, --help         Display this help message and exit\n");
     printf("-v, --version      Display version number and exit\n");
     printf("-V, --verbose      Enable verbose mode\n");
@@ -101,6 +143,7 @@ int main(int argc, char **argv) {
         {"socket", required_argument, 0, 's'},
         {"bar_id", required_argument, 0, 'b'},
         {"transparency", no_argument, 0, 't'},
+        {"group", required_argument, 0, 'g'},
         {"help", no_argument, 0, 'h'},
         {"version", no_argument, 0, 'v'},
         {"verbose", no_argument, 0, 'V'},
@@ -108,7 +151,7 @@ int main(int argc, char **argv) {
 
     int opt;
     int option_index = 0;
-    while ((opt = getopt_long(argc, argv, "b:s:thvV", long_opt, &option_index)) != -1) {
+    while ((opt = getopt_long(argc, argv, "b:s:tg:hvV", long_opt, &option_index)) != -1) {
         switch (opt) {
             case 's':
                 socket_path = expand_path(optarg);
@@ -122,6 +165,9 @@ int main(int argc, char **argv) {
                 break;
             case 't':
                 config.transparency = true;
+                break;
+            case 'g':
+                parse_group_options(optarg, ",");
                 break;
             case 'V':
                 config.verbose = true;

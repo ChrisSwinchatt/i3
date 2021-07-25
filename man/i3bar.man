@@ -31,6 +31,10 @@ i3bar will use the first bar block as configured in i3.
 *-t, --transparency*::
 Enable transparency (RGBA colors)
 
+*-g, --group* 'left,mid'::
+Group blocks, putting 'left' on the left of the bar, 'mid' in the centre
+and the rest on the right with spaces in between ('left' and 'mid' are >=0)
+
 *-h, --help*::
 Display a short help-message and exit
 

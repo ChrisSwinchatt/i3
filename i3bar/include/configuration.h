@@ -59,6 +59,9 @@ typedef struct config_t {
     int num_outputs;
     char **outputs;
 
+    long* groups;
+    size_t num_groups;
+
     bar_display_mode_t hide_on_modifier;
 
     /* The current hidden_state of the bar, which indicates whether it is hidden or shown */

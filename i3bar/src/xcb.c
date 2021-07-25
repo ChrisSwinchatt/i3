@@ -234,9 +234,49 @@ static uint32_t predict_statusline_length(bool use_short_text) {
 }
 
 /*
- * Redraws the statusline to the output's statusline_buffer
+ * Calculates the total width of the blocks in each group.
  */
-static void draw_statusline(i3_output *output, uint32_t clip_left, bool use_focus_colors, bool use_short_text) {
+static void calculate_group_widths(uint32_t* group_widths, bool use_short_text)
+{
+    struct status_block *block;
+    size_t current_group = 0;
+    size_t current_group_items = 0;
+    memset(group_widths, 0, sizeof(group_widths[0])*config.num_groups);
+    TAILQ_FOREACH (block, &statusline_head, blocks) {
+        i3String *text = block->full_text;
+        struct status_block_render_desc *render = &block->full_render;
+        if (use_short_text && block->short_text != NULL) {
+            text = block->short_text;
+            render = &block->short_render;
+        }
+
+        if (i3string_get_num_bytes(text) == 0) {
+            continue;
+        }
+
+        group_widths[current_group] += render->width + render->x_offset + render->x_append;
+
+        if (current_group <= config.num_groups) {
+            current_group_items++;
+            if (current_group_items >= config.groups[current_group]) {
+                current_group_items = 0;
+                current_group++;
+                continue;
+            }
+        }
+
+        if (TAILQ_NEXT(block, blocks) != NULL) {
+            group_widths[current_group] += block->sep_block_width;
+        }
+    }
+}
+
+/*
+ * Redraws the statusline to the output's statusline_buffer and updates statusline_width with any spacing added by
+ * grouping.
+ */
+static void draw_statusline(i3_output *output, uint32_t clip_left, bool use_focus_colors, bool use_short_text,
+                                                             uint32_t* statusline_width, uint32_t max_statusline_width) {
     struct status_block *block;
 
     color_t bar_color = (use_focus_colors ? colors.focus_bar_bg : colors.bar_bg);
@@ -250,6 +290,26 @@ static void draw_statusline(i3_output *output, uint32_t clip_left, bool use_focu
      * actually rendering content to the surface. */
     uint32_t x = 0 - clip_left;
 
+    /* Initialise control variables for block grouping.
+     * Blocks are grouped if config.num_groups > 0 and there is enough difference between statusline_width and
+     * max_statusline_width to add at least 1px of space after each group. */
+    bool grouping = false;
+    size_t num_placed_in_group = 0;
+    size_t current_group = 0;
+    uint32_t* group_widths;
+    uint32_t group_start_x = 0;
+    uint32_t space_per_group = 0;
+
+    if (*statusline_width < max_statusline_width && config.num_groups > 0) {
+        space_per_group = max_statusline_width/config.num_groups + max_statusline_width%config.num_groups;
+        if (space_per_group > 0) {
+            grouping = true;
+            group_start_x = x;
+            group_widths = smalloc(sizeof(group_widths[0])*config.num_groups);
+            calculate_group_widths(group_widths, use_short_text);
+        }
+    }
+
     /* Draw the text of each block */
     TAILQ_FOREACH (block, &statusline_head, blocks) {
         i3String *text = block->full_text;
@@ -259,8 +319,9 @@ static void draw_statusline(i3_output *output, uint32_t clip_left, bool use_focu
             render = &block->short_render;
         }
 
-        if (i3string_get_num_bytes(text) == 0)
+        if (i3string_get_num_bytes(text) == 0) {
             continue;
+        }
 
         color_t fg_color;
         if (block->urgent) {
@@ -305,16 +366,39 @@ static void draw_statusline(i3_output *output, uint32_t clip_left, bool use_focu
         }
 
         draw_util_text(text, &output->statusline_buffer, fg_color, bg_color,
-                       x + render->x_offset + has_border * logical_px(block->border_left),
-                       bar_height / 2 - font.height / 2,
-                       render->width - has_border * logical_px(block->border_left + block->border_right));
+                    x + render->x_offset + has_border * logical_px(block->border_left),
+                    bar_height / 2 - font.height / 2,
+                    render->width - has_border * logical_px(block->border_left + block->border_right));
+
+        /* Start a new group if required. */
+        if (grouping && current_group < config.num_groups) {
+            num_placed_in_group++;
+            long max_for_group = config.groups[current_group];
+            if (num_placed_in_group >= max_for_group) {
+                /* Fill the remainder of space_per_group, or cut off the end of the group if it exceeded it.
+                 * The new group starts at the end of the previous one's allotted space. */
+                num_placed_in_group = 0;
+                current_group++;
+                group_start_x += space_per_group - group_widths[current_group]/2 - group_widths[current_group]%2;
+                x = group_start_x;
+                continue;
+            }
+
+            /* For placing blocks within groups, fall through to normal handling of x. */
+        }
+
         x += full_render_width;
 
-        /* If this is not the last block, draw a separator. */
+        /* If this is not the last block on the bar or in the group, draw a separator. */
         if (TAILQ_NEXT(block, blocks) != NULL) {
             x += block->sep_block_width;
             draw_separator(output, x, block, use_focus_colors);
         }
+    }
+
+    *statusline_width = x;
+    if (grouping) {
+        free(group_widths);
     }
 }
 
@@ -2080,10 +2164,17 @@ void draw_bars(bool unhide) {
                 }
             }
 
-            int16_t visible_statusline_width = MIN(statusline_width, max_statusline_width);
+            draw_statusline(outputs_walk, clip_left, use_focus_colors, use_short_text, &statusline_width, max_statusline_width);
+
+            int16_t visible_statusline_width;
+            if (config.num_groups) {
+                visible_statusline_width = max_statusline_width;
+            } else {
+                visible_statusline_width = MIN(statusline_width, max_statusline_width);
+            }
+
             int x_dest = outputs_walk->rect.w - tray_width - logical_px((tray_width > 0) * sb_hoff_px) - visible_statusline_width;
 
-            draw_statusline(outputs_walk, clip_left, use_focus_colors, use_short_text);
             draw_util_copy_surface(&outputs_walk->statusline_buffer, &outputs_walk->buffer, 0, 0,
                                    x_dest, 0, visible_statusline_width, (int16_t)bar_height);
 
