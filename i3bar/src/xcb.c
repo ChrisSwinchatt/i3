@@ -301,7 +301,7 @@ static void draw_statusline(i3_output *output, uint32_t clip_left, bool use_focu
     uint32_t space_per_group = 0;
 
     if (*statusline_width < max_statusline_width && config.num_groups > 0) {
-        space_per_group = max_statusline_width/config.num_groups + max_statusline_width%config.num_groups;
+        space_per_group = max_statusline_width/config.num_groups - max_statusline_width%config.num_groups - x;
         if (space_per_group > 0) {
             grouping = true;
             group_start_x = x;
@@ -379,7 +379,12 @@ static void draw_statusline(i3_output *output, uint32_t clip_left, bool use_focu
                  * The new group starts at the end of the previous one's allotted space. */
                 num_placed_in_group = 0;
                 current_group++;
-                group_start_x += space_per_group - group_widths[current_group]/2 - group_widths[current_group]%2;
+                group_start_x += space_per_group;
+                if (current_group < config.num_groups) {
+                    group_start_x = group_start_x - group_widths[current_group]/2 - group_widths[current_group]%2;
+                } else {
+                    group_start_x = max_statusline_width - group_widths[current_group];
+                }
                 x = group_start_x;
                 continue;
             }
